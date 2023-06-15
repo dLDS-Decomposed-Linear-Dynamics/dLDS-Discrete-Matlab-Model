@@ -1,0 +1,123 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% Force Start
+
+fprintf('About to open...\n')
+[poolsize] = PaceParallelToolbox_r2014a_2(0)
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% Options
+
+plot_every = 0;
+save_every = 500;
+
+sig_opts.N = 64;
+sig_opts.M = 64;
+sig_opts.S = 10;
+sig_opts.sig_var = 0.05;
+sig_opts.sig_var = 1;
+sig_opts.T_s = 20;
+sig_opts.nF = 1;
+sig_opts.sF = 1;
+
+noise_opts.p = 0;
+noise_opts.dg_var = 1e-4;
+
+inf_opts.lambda_val = 0.01;
+inf_opts.lambda_history = 0.10;
+inf_opts.tol = 1e-3;
+
+N_ex = 40;
+
+infer_hand = @bpdndf_handle;
+
+F_true = rand_dyn_create(sig_opts.N, sig_opts.nF, 'perm');
+D_true = eye(sig_opts.N);
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% Initializations
+
+step_f = 2;
+step_d = 10;
+step_decay = 0.9995;
+
+F = initialize_dynamics(sig_opts.nF, sig_opts.N);
+D = initialize_dictionary(sig_opts.N, sig_opts.M);
+
+F_init = F;
+D_init = D;
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% Run Learning
+
+for n_iters = 1:10000
+
+    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    %% Make some data
+
+    X_ex = cell(1,N_ex);
+
+    for kk = 1:N_ex
+        [X_ex{kk}, ~, ~] = rand_seq_create(sig_opts, noise_opts, F_true);
+	%X_ex{kk} = reshape(D_true*X_ex{kk},size(D,1),1,size(X_ex{kk},2)); 
+	X_ex{kk} = D_true*X_ex{kk}; 
+    end
+
+    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    %% Inference
+
+    A_cell = parallel_dynamic_inference(X_ex, D, F, infer_hand, inf_opts);
+
+    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    %% Update step
+
+    D = dictionary_update(cell2mat(X_ex), D, cell2mat(A_cell), step_d);
+    if sig_opts.T_s > 1 
+        F = dynamics_update(F, A_cell, step_f);
+    end
+    step_d = step_d*step_decay;
+    step_f = step_f*step_decay;
+    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    %% Plotting?
+    
+    if (plot_every*floor(n_iters/plot_every) == n_iters) && (plot_every > 0)
+        %%
+        figure(1)
+        subplot(2,2,1), imagesc(basis2img2(D, sqrt(sig_opts.N)*[1,1], sqrt(sig_opts.N)*[1,1]))
+        title('Learned Dictionary', 'FontSize', 20)
+        colormap gray
+        axis image
+        axis off
+        subplot(2,2,2), imagesc((D)*F{1}*(D'))
+        title('Learned Dynamics', 'FontSize', 20)
+        colormap gray
+        axis image
+        axis off
+        figure(1)
+        subplot(2,2,3), imagesc(basis2img2(D_true, sqrt(sig_opts.N)*[1,1], sqrt(sig_opts.N)*[1,1]))
+        title('True Dictionary', 'FontSize', 20)
+        colormap gray
+        axis image
+        axis off
+        subplot(2,2,4), imagesc(F_true{1})
+        title('True Dynamics', 'FontSize', 20)
+        colormap gray
+        axis image
+        axis off
+    end
+    
+    if (save_every*floor(n_iters/save_every) == n_iters) && (save_every > 0)
+       % save
+    end
+
+    fprintf('Iteration %d complete. D error is %f and F error is %f\n', n_iters, ...
+        sum((vec(D*(D')) - D_true(:)).^2), sum((vec(D*F{1}*(D')) - F_true{1}(:)).^2) )
+end
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% End Force
+
+delete(gcp('nocreate'));
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
