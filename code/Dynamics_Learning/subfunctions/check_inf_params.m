@@ -55,6 +55,9 @@ end
 if (~isfield(inf_opts,'dsamp'))||isempty(inf_opts.dsamp)
     inf_opts.dsamp = 4;
 end
+if (~isfield(inf_opts,'D_update'))||isempty(inf_opts.D_update)
+    inf_opts.D_update = true;
+end
 if (~isfield(inf_opts,'F_update'))||isempty(inf_opts.F_update)
     inf_opts.F_update = true;
 end
@@ -73,5 +76,10 @@ end
 if (~isfield(inf_opts,'deltaDynamics'))||isempty(inf_opts.deltaDynamics)
     inf_opts.deltaDynamics = false;
 end
+if (~isfield(inf_opts,'debias'))||isempty(inf_opts.debias)
+    inf_opts.debias = true;
+end
+
+% solver_type '' defaults to fista, special '' defaults to bilinear
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%

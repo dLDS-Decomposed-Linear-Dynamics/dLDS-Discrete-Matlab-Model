@@ -1,7 +1,7 @@
 function [varargout] = BPDN_DF_bilinear(varargin)
 
 % [coef_dcs, recon_dcs, rMSE_dcs, PSNR_dcs] = ...
-%        BPDN_DF_bilinear(MEAS_SIG, MEAS_SEL, DYN_FUN, DWTfunc, param_vals, ...
+%        BPDN_DF_bilinear(MEAS_SIG, MEAS_FUN, DYN_FUN, DWTfunc, param_vals, ...
 %        TRUE_VID)
 %
 %   The inputs are:
@@ -82,17 +82,33 @@ end
 if isfield(param_vals, 'solver_type')
     if strcmp(param_vals.solver_type, 'cvx')
         doCVX = true;
-    else
+        doTFOCS = false;
+    elseif strcmp(param_vals.solver_type, 'tfocs')
         doCVX = false;
+        doTFOCS = true;
+    else
+        % defaults to fista
+        doCVX = false;
+        doTFOCS = false; 
     end
 else
-    doCVX = false; %defaults to tfocs
+    % defaults to fista
+    doCVX = false;
+    doTFOCS = false; 
 end
 
 if isfield(param_vals, 'CVX_Precision')
     CVX_Precision = param_vals.CVX_Precision;
 else
     CVX_Precision = 'default';
+end
+
+if isfield(param_vals, 'deltaDynamics');    deltaOpt = param_vals.deltaDynamics;
+else;                                       deltaOpt = false;
+end
+
+if isfield(param_vals, 'debias');    debiasOpt = param_vals.debias;
+else;                                debiasOpt = true; % debias by default
 end
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -150,7 +166,8 @@ end
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %% Solve for rest of frames
 
-whatIsD = DWT_apply(Phit(eye(N2))).';
+% whatIsD = DWT_apply(Phit(eye(N2))).';
+whatIsD = Af(eye(N2));
 doNormScale = false;
 % doCVX = true;
 
@@ -246,26 +263,27 @@ for kk = 2:num_frames
         im_res              = DWT_invert(real(res(1:N2)));
         coef_dcs(:, :, kk)  = res(1:N2); 
         bcoef_dcs(:, :, kk) = res(N2+1:N2+N_b); 
-    else
-%         Af = @(x) [sqrt(lambda_historyb)*x(N2+1:N2+N_b); ...
-%            sqrt(lambda_history)*x(1:N2) - sqrt(lambda_history)*f_dyn*x(N2+1:N2+N_b); ...
-%            Phi(DWT_invert(x(1:N2)))];
-%         Ab = @(x) [DWT_apply(Phit(x((N_b+N2+1):end))) + sqrt(lambda_history)*x((N_b+1):(N_b+N2)); ...
-%                    sqrt(lambda_historyb)*x(1:N_b) - sqrt(lambda_history)*(f_dyn')*x((N_b+1):(N_b+N2))];
-%         A = linop_handles([M+N2+N_b, N2+N_b], Af, Ab, opt_set);
+       
+    elseif doTFOCS
+        Af = @(x) [sqrt(lambda_historyb)*x(N2+1:N2+N_b); ...
+           sqrt(lambda_history)*x(1:N2) - sqrt(lambda_history)*f_dyn*x(N2+1:N2+N_b); ...
+           Phi(DWT_invert(x(1:N2)))];
+        Ab = @(x) [DWT_apply(Phit(x((N_b+N2+1):end))) + sqrt(lambda_history)*x((N_b+1):(N_b+N2)); ...
+                   sqrt(lambda_historyb)*x(1:N_b) - sqrt(lambda_history)*(f_dyn')*x((N_b+1):(N_b+N2))];
+        A = linop_handles([M+N2+N_b, N2+N_b], Af, Ab, opt_set);
 %         A = [zedros(4,10) sqrt(lambda_historyb)*eye(4,4); sqrt(lambda_history)*eye(10,10) sqrt(lambda_history)*-1*f_dyn;whatIsD zeros(10,4)];
         % Optimize the BPDN objective function with TFOCS
-        A = [zeros(4,10) sqrt(lambda_historyb)*eye(4,4); sqrt(lambda_history)*eye(10,10) sqrt(lambda_history)*-1*f_dyn;  whatIsD zeros(10,4)];
+%         A = [zeros(4,10) sqrt(lambda_historyb)*eye(4,4); sqrt(lambda_history)*eye(10,10) sqrt(lambda_history)*-1*f_dyn;  whatIsD zeros(10,4)];
         lamVec = [lambda_val*ones(N2,1);lambda_b*ones(N_b,1)];
         Y = [sqrt(lambda_historyb)*bcoef_dcs(:,:,kk-1); zeros(N2,1); MEAS_SIG(:, :, kk)];
     %     fprintf('condition of F is %f\n', cond(f_dyn))
-%        res    = solver_L1RLS(A, [sqrt(lambda_historyb)*bcoef_dcs(:,:,kk-1); zeros(N2,1); MEAS_SIG(:, :, kk)], lamVec, zeros(N2+N_b, 1), opts );
+       res    = solver_L1RLS(A, Y, lamVec, zeros(N2+N_b, 1), opts );
 
 % res = A\Y;
-        opts.pos        = false;
-        opts.lambda     = lamVec(:);
-        opts.check_grad = 0;
-        res = fista_lasso(Y, A, [], opts);
+%         opts.pos        = false;
+%         opts.lambda     = lamVec(:);
+%         opts.check_grad = 0;
+%         res = fista_lasso(Y, A, [], opts);
 %         param.mode   = 2;
 %         param.lambda = 1;
 %         param.tol = 1e-8;
@@ -275,6 +293,95 @@ for kk = 2:num_frames
         im_res              = DWT_invert(real(res(1:N2)));
         coef_dcs(:, :, kk)  = res(1:N2); 
         bcoef_dcs(:, :, kk) = res(N2+1:N2+N_b); 
+    
+    else %fista
+
+        if deltaOpt;  yNow = MEAS_SIG(:,:,kk) - MEAS_SIG(:,:,kk-1);
+        else;         yNow = MEAS_SIG(:,:,kk);                        end
+        
+        if lambda_historyb == 0
+            A = [zeros(N_b,N2) eye(N_b,N_b); sqrt(lambda_history)*eye(N2,N2) sqrt(lambda_history)*-1*f_dyn;whatIsD zeros(size(whatIsD,1),N_b)];
+            Y = [bcoef_dcs(:,:,kk-1); zeros(N2,1); yNow];
+            lamVec = [lambda_val*ones(N2,1);lambda_b*ones(N_b,1)];
+
+            opts.pos        = false;
+%             opts.lambda     = lambda_b*ones(N_b,1);
+            opts.lambda     = lamVec(:);
+            opts.check_grad = 0;
+
+%             Y      = [bcoef_dcs(:,:,kk-1); zeros(N2,1); yNow];
+% %             A      = [sqrt(lambda_historyb)*eye(N_b,N_b); f_dyn; whatIsD];
+%             A = [zeros(N_b,N2) eye(N_b,N_b); eye(N2,N2) -1*f_dyn;whatIsD zeros(size(whatIsD,1),N_b)];
+    
+            res = fista_lasso(Y, A, [], opts); %FIXME: augmented Y needed, not just measurement
+       
+    %         A = linop_handles([M,M],Af,Ab,opt_set);
+    %         res = solver_L1RLS(f_dyn, yNow,lambda_b,zeros(N_b,1),opts);
+        else
+            
+%             A      = [sqrt(lambda_historyb)*eye(N_b,N_b); f_dyn];
+%             Y      = [sqrt(lambda_historyb)*bcoef_dcs(:,:,kk-1); yNow];
+%             lamVec = lambda_b*ones(N_b,1);
+
+%             A      = [sqrt(lambda_historyb)*eye(N_b,N_b); f_dyn; whatIsD];
+            A = [zeros(N_b,N2) sqrt(lambda_historyb)*eye(N_b,N_b); sqrt(lambda_history)*eye(N2,N2) sqrt(lambda_history)*-1*f_dyn;whatIsD zeros(size(whatIsD,1),N_b)];
+            Y = [sqrt(lambda_historyb)*bcoef_dcs(:,:,kk-1); zeros(N2,1); yNow];
+            lamVec = [lambda_val*ones(N2,1);lambda_b*ones(N_b,1)];
+            
+    
+            opts.pos        = false;
+            opts.lambda     = lamVec(:);
+            opts.check_grad = 0;
+            res = fista_lasso(Y, A, [], opts);
+    %         res = res + sign(res).*opts.lambda.*(abs(res) > 0.1*max(abs(res)));% Correct lasso bias
+            % OPTION 1
+    %         idxNNZ = (abs(res) > 0.5*max(abs(res)));
+    %         res(~idxNNZ) = 0;
+    %         res(idxNNZ)  = A(:,idxNNZ)\Y;
+            % OPTION 2
+    %         opts.lambda = lamVec(:).*(~idxNNZ);
+            if debiasOpt
+                opts.lambda = lamVec(:)./(1 + 100*abs(res));
+                res         = fista_lasso(Y, A, [], opts);
+            end
+        end
+        im_res              = DWT_invert(real(res(1:N2)));
+        coef_dcs(:, :, kk)  = res(1:N2); 
+        bcoef_dcs(:, :, kk) = res(N2+1:N2+N_b);
+
+    %     else
+% %         Af = @(x) [sqrt(lambda_historyb)*x(N2+1:N2+N_b); ...
+% %            sqrt(lambda_history)*x(1:N2) - sqrt(lambda_history)*f_dyn*x(N2+1:N2+N_b); ...
+% %            Phi(DWT_invert(x(1:N2)))];
+% %         Ab = @(x) [DWT_apply(Phit(x((N_b+N2+1):end))) + sqrt(lambda_history)*x((N_b+1):(N_b+N2)); ...
+% %                    sqrt(lambda_historyb)*x(1:N_b) - sqrt(lambda_history)*(f_dyn')*x((N_b+1):(N_b+N2))];
+% %         A = linop_handles([M+N2+N_b, N2+N_b], Af, Ab, opt_set);
+% %         A = [zedros(4,10) sqrt(lambda_historyb)*eye(4,4); sqrt(lambda_history)*eye(10,10) sqrt(lambda_history)*-1*f_dyn;whatIsD zeros(10,4)];
+%         % Optimize the BPDN objective function with TFOCS
+%         A = [zeros(4,10) sqrt(lambda_historyb)*eye(4,4); sqrt(lambda_history)*eye(10,10) sqrt(lambda_history)*-1*f_dyn;  whatIsD zeros(10,4)];
+%         lamVec = [lambda_val*ones(N2,1);lambda_b*ones(N_b,1)];
+%         Y = [sqrt(lambda_historyb)*bcoef_dcs(:,:,kk-1); zeros(N2,1); MEAS_SIG(:, :, kk)];
+%     %     fprintf('condition of F is %f\n', cond(f_dyn))
+% %        res    = solver_L1RLS(A, [sqrt(lambda_historyb)*bcoef_dcs(:,:,kk-1); zeros(N2,1); MEAS_SIG(:, :, kk)], lamVec, zeros(N2+N_b, 1), opts );
+% 
+% % res = A\Y;
+%         opts.pos        = false;
+%         opts.lambda     = lamVec(:);
+%         opts.check_grad = 0;
+%         res = fista_lasso(Y, A, [], opts);
+% %         param.mode   = 2;
+% %         param.lambda = 1;
+% %         param.tol = 1e-8;
+% %         res      = mexLassoWeighted(Y, A, lamVec(:), param);
+%         
+%         
+%         im_res              = DWT_invert(real(res(1:N2)));
+%         coef_dcs(:, :, kk)  = res(1:N2); 
+%         bcoef_dcs(:, :, kk) = res(N2+1:N2+N_b); 
+
+%         if deltaOpt;  yNow = MEAS_SIG(:,:,kk) - MEAS_SIG(:,:,kk-1);
+%         else;         yNow = MEAS_SIG(:,:,kk);                        end
+%  
         
     end   
   

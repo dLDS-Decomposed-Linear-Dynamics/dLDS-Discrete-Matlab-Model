@@ -37,9 +37,9 @@ Fgt2{end}                        = 0.001*randn(sizeD,sizeD);
 %%
 
 % Set parameters
-inf_opts.nF              = 15; %
-inf_opts.N               = size(latentStatesX{1},1); %scaled down from 100 (zebrafish, whole brain)
-inf_opts.M               = size(dFF{1},1) ;
+inf_opts.nF              = 15; % # dynamics operators
+inf_opts.N               = size(latentStatesX{1},1); % # latent states
+inf_opts.M               = size(dFF{1},1) ; % original dimension (# channels)
 % disp('If reset dFF below, make sure to change inf_opts.M');
 inf_opts.lambda_val      = 0.0001;         % ASC added 7/25 % VARY - tradeoff: approx. SNR - see ratios of traces % 0.0001 (don't shrink this further - gets to be essentially 0 for solver_L1RLS)
 inf_opts.lambda_history  = 0.0001;         % ASC added 7/25
@@ -48,23 +48,24 @@ inf_opts.lambda_historyb = 0.45;           % ASC added 7/25 %0.7
 inf_opts.tol             = 1e-8;           % 1e-3
 inf_opts.max_iter2       = 20;             % 500 %20
 inf_opts.max_iters       = 1000;
-inf_opts.special         = '';
-inf_opts.F_update        = true;
-inf_opts.D_update        = false;
-inf_opts.N_ex            = 50;    % 40 %100 %30
-inf_opts.T_s             = 200; % 30 %100 %20
-
+inf_opts.F_update        = true; % default = true;
+inf_opts.D_update        = false; % NoObs case - default = true;
+inf_opts.N_ex            = 50;   
+inf_opts.T_s             = 200; 
 inf_opts.step_d          = 1;  % ASC added 7/25
 inf_opts.step_f          = 10;  % ASC added 7/25 % 30
 inf_opts.step_decay      = 0.998;  
 inf_opts.plot_option     = 10;  % ASC added 7/25
 inf_opts.lambda_f_decay  = 0.996;
 inf_opts.lambda_f        = 0.20;
-
-% inf_opts.solver_type     = 'tfocs'; %default: 'tfocs'
-inf_opts.CVX_Precision   = 'default';   %default = 'default'
+inf_opts.solver_type     = ''; % fista
 inf_opts.special         = 'noobs';
 inf_opts.deltaDynamics   = false; %default: false %use x_t-x_{t-1}
+
+% inf_opts.solver_type     = 'tfocs'; %default: ''; (fista)
+% inf_opts.CVX_Precision   = 'default';   %default = 'default'
+% inf_opts.special         = ''; % regular bilinear inference
+% inf_opts.debias          = true; % default = true; not used for NoObs
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%
