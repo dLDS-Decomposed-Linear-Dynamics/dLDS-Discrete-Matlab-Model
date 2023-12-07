@@ -25,9 +25,16 @@ inf_opts = checkSizes(inf_opts, D_init, F_init);                           % Che
 if isempty(F_init);   F = initialize_dynamics(inf_opts.nF, inf_opts.N);    % If necessary, initialize the dynamics
 else;                 F = F_init;                                          % Otherwise just pass through
 end
-if isempty(D_init);   D = initialize_dictionary(inf_opts.N, inf_opts.M);   % If necessary, initialize the dictionary
+if isempty(D_init)
+    if inf_opts.AcrossIndividuals % EY added 9/6/23
+%         D = cell(size(data_obj,1),1);
+        D = cellfun(@(x) initialize_dictionary(inf_opts.N, x),inf_opts.M,'UniformOutput',false);   % If necessary, initialize the dictionary
+    else
+        D = initialize_dictionary(inf_opts.N, inf_opts.M);   % If necessary, initialize the dictionary
+    end
 else;                 D = D_init;                                          % Otherwise just pass through
 end
+
 
 clear D_init F_init                                                        % Do some house cleaning
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -37,45 +44,103 @@ for n_iters = 1:inf_opts.max_iters
 
     %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
     %% Make some data
-    
-    X_ex = sampleSomeDataSeqs(inf_opts, data_type, sig_opts, data_obj, ...
+    if inf_opts.AcrossIndividuals % EY added 9/6/23
+        X_ex = cellfun(@(x) sampleSomeDataSeqs(inf_opts, data_type, sig_opts, x, ...
+                                                           D_true, F_true),data_obj,'UniformOutput',false);
+    else
+        X_ex = sampleSomeDataSeqs(inf_opts, data_type, sig_opts, data_obj, ...
                                                            D_true, F_true);% Select some data for this learning iteration
-                                                       
+    end
     %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
     %% Inference
 
-    [A_cell,B_cell] = parallel_bilinear_dynamic_inference(X_ex, D, F, ...
+    if inf_opts.AcrossIndividuals % EY added 08/27/2023
+        for ii = 1:size(data_obj,1)
+            [A_cell{ii},B_cell{ii}] = parallel_bilinear_dynamic_inference(X_ex{ii}, D{ii}, F, ...
                                        @bpdndf_bilinear_handle, inf_opts); % Infer sparse coefficients
-        
+        end
+    else
+        [A_cell,B_cell] = parallel_bilinear_dynamic_inference(X_ex, D, F, ...
+                                       @bpdndf_bilinear_handle, inf_opts); % Infer sparse coefficients
+    end
     %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
     %% Update step
     
     D_old = D;  F_old = F;                                                 % Retain a copy of the representational & dynamics dictionary for comparison purposes
     if (inf_opts.D_update == true) % (~strcmp(inf_opts.special, 'noobs'))||   % ASC added 7/25
-        D = dictionary_update(cell2mat(X_ex), D, cell2mat(A_cell), ...
+        if inf_opts.AcrossIndividuals % EY added 08/27/2023
+            for ii = 1:size(data_obj,1)                
+                D{ii} = dictionary_update(cell2mat(X_ex{ii}), D{ii}, cell2mat(A_cell{ii}), ...
                                                          inf_opts.step_d); % Update static dictionary
+            end
+        else
+            D = dictionary_update(cell2mat(X_ex), D, cell2mat(A_cell), ...
+                                                         inf_opts.step_d); % Update static dictionary
+        end
     end  % ASC added 7/25
+
+    if inf_opts.AcrossIndividuals % EY added 08/27/2023
+        A_cell_forF = reshape(vertcat(A_cell{:}),[],1).';
+        B_cell_forF = reshape(vertcat(B_cell{:}),[],1).';
+    end
+
     if (inf_opts.T_s > 1 && isempty(inf_opts.F_update)) || (inf_opts.F_update == true)
-        F = dynamics_update(F, A_cell, inf_opts.step_f, B_cell, inf_opts.lambda_f);           % Update dynamics dictionary
+        if inf_opts.AcrossIndividuals
+            F = dynamics_update(F, A_cell_forF, inf_opts.step_f, B_cell_forF, inf_opts.lambda_f);           % Update dynamics dictionary
+        else
+            F = dynamics_update(F, A_cell, inf_opts.step_f, B_cell, inf_opts.lambda_f);           % Update dynamics dictionary
+        end
     end
     inf_opts.step_d = inf_opts.step_d*inf_opts.step_decay;                 % Reduce the step size for the static dictionary
     inf_opts.step_f = inf_opts.step_f*inf_opts.step_decay;                 % Reduce the step size for the dynamics dictionary
     
-    inf_opts.lambda_f = inf_opts.lambda_f*inf_opts.lambda_f_decay;         % Reduce the regularization for the dynamics dictionary
-    
     %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
     %% Display some statistics
-    outputLearningStats(data_type,D,F,inf_opts,n_iters,D_true,F_true,D_old,F_old,B_cell,dataShape);
+    if inf_opts.AcrossIndividuals
+        for ii = 1:size(data_obj,1)                
+            tmp_plotting_fun(data_type,D{ii},F,inf_opts,n_iters, dataShape)
+            f_err = 0;
+            for mm = 1:numel(F)
+                f_err = f_err + (1/numel(F))*sum(sum((F_old{mm} - F{mm}).^2))/sum(sum(F{mm}.^2));
+            end
+            fprintf('Iteration %d complete. Mean dD: %f, Mean dF: %f, Max b: %f, Median b use: %f\n', n_iters, ...
+                mean(sum((D{ii} - D_old{ii}).^2)./sum(D_old{ii}.^2)), f_err, max(max(abs(cell2mat(B_cell{ii})))), ...
+                median(sum(abs(cell2mat(B_cell{ii}))>1e-3)) )
+        end
+    elseif strcmp(data_type, 'synth')
+        tmp_plotting_fun(data_type,D,F,inf_opts,n_iters,D_true,F_true)
+        f_err = correlate_learned_dynamics(F, F_true,D, dataShape);
+        
+        fprintf('Iteration %d complete. D error is %f and F error is %f (avg b is %f)\n', n_iters, ...
+            sum((vec(D*(D')) - D_true(:)).^2), mean(f_err), mean(mean(cell2mat(B_cell))) )
+    elseif strcmp(data_type, 'BBC')||strcmp(data_type, 'datamatrix')
+        tmp_plotting_fun(data_type,D,F,inf_opts,n_iters, dataShape)
+        f_err = 0;
+        for mm = 1:numel(F)
+            f_err = f_err + (1/numel(F))*sum(sum((F_old{mm} - F{mm}).^2))/sum(sum(F{mm}.^2));
+        end
+        fprintf('Iteration %d complete. Mean dD: %f, Mean dF: %f, Max b: %f, Median b use: %f\n', n_iters, ...
+            mean(sum((D - D_old).^2)./sum(D_old.^2)), f_err, max(max(abs(cell2mat(B_cell)))), ...
+            median(sum(abs(cell2mat(B_cell))>1e-3)) )
+    elseif strcmp(data_type, 'datacell')             
+        tmp_plotting_fun(data_type,D,F,inf_opts,n_iters, dataShape)
+        f_err = 0;
+        for mm = 1:numel(F)
+            f_err = f_err + (1/numel(F))*sum(sum((F_old{mm} - F{mm}).^2))/sum(sum(F{mm}.^2));
+        end
+        fprintf('Iteration %d complete. Mean dD: %f, Mean dF: %f, Max b: %f, Median b use: %f\n', n_iters, ...
+            mean(sum((D - D_old).^2)./sum(D_old.^2)), f_err, max(max(abs(cell2mat(B_cell)))), ...
+            median(sum(abs(cell2mat(B_cell))>1e-3)) )
+        
+    else
+    end
 end
 
 end
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-% EXTRA FUNCTIONS
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-%%
 function [data_type, dataShape, sig_opts] = checkInputTypes(data_obj)
 
 sig_opts = [];                                                             % Initialize option struct
@@ -105,7 +170,7 @@ elseif isnumeric(data_obj)
     elseif ndims(data_obj) == 3
         dataShape = 'image';
     else
-        error('Incompatiable number of dimensions in the data array!')
+        error('Incompatible number of dimensions in the data array!')
     end
     
 elseif isempty(data_obj)
@@ -117,7 +182,6 @@ end
 end
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-%%
 function inf_opts = checkSizes(inf_opts, D_init, F_init)
 
 if (~isfield(inf_opts,'M'))||isempty(inf_opts.M)
@@ -153,8 +217,6 @@ end
 end
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-%%
-
 function X_ex = sampleSomeDataSeqs(inf_opts, data_type, sig_opts, data_obj, D_true, F_true)
 
 X_ex = cell(1,inf_opts.N_ex);
@@ -177,7 +239,6 @@ end
 end
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-%%
 function [D_true, F_true] = generateOptionalGT(data_type, sig_opts)
 if strcmp(data_type, 'synth')
     F_true = rand_dyn_create(sig_opts.M, sig_opts.nF, 'perm');             % Create a dictionary of dynamics
@@ -187,35 +248,5 @@ else
 end
 end
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-%%
-
-function outputLearningStats(data_type,D,F,inf_opts,n_iters,D_true,F_true,D_old,F_old,B_cell,dataShape)
-
-if strcmp(data_type, 'synth')
-    tmp_plotting_fun(data_type,D,F,inf_opts,n_iters,D_true,F_true)
-    f_err = correlate_learned_dynamics(F, F_true,D, dataShape);
-
-    fprintf('Iteration %d complete. D error is %f and F error is %f (avg b is %f)\n', n_iters, ...
-        sum((vec(D*(D')) - D_true(:)).^2), mean(f_err), mean(mean(cell2mat(B_cell))) )
-elseif strcmp(data_type, 'BBC')||strcmp(data_type, 'datamatrix')||strcmp(data_type, 'datacell')
-    tmp_plotting_fun(data_type,D,F,inf_opts,n_iters,dataShape)
-    f_err = computeDynErr(F,F_old);
-    fprintf('Iteration %d complete. Mean dD: %f, Mean dF: %f, Max b: %f, Median b use: %f\n', n_iters, ...
-        mean(sum((D - D_old).^2)./sum(D_old.^2)), f_err, max(max(abs(cell2mat(B_cell)))), ...
-        median(sum(abs(cell2mat(B_cell))>1e-3)) )
-else
-end
-end
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-%%
-
-function f_err = computeDynErr(F,F_old)
-f_err = 0;
-for mm = 1:numel(F)
-    f_err = f_err + (1/numel(F))*sum(sum((F_old{mm} - F{mm}).^2))/sum(sum(F{mm}.^2));
-end
-end
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%

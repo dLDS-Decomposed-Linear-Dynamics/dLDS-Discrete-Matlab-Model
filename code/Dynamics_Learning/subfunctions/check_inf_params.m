@@ -79,6 +79,12 @@ end
 if (~isfield(inf_opts,'debias'))||isempty(inf_opts.debias)
     inf_opts.debias = true;
 end
+if (~isfield(inf_opts,'sampleProportionally'))||isempty(inf_opts.sampleProportionally)
+    inf_opts.sampleProportionally = true;
+end
+if (~isfield(inf_opts,'AcrossIndividuals'))||isempty(inf_opts.AcrossIndividuals)
+    inf_opts.AcrossIndividuals = false;
+end
 
 % solver_type '' defaults to fista, special '' defaults to bilinear
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
