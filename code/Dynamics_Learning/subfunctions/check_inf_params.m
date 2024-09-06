@@ -79,6 +79,30 @@ end
 if (~isfield(inf_opts,'debias'))||isempty(inf_opts.debias)
     inf_opts.debias = true;
 end
+if (~isfield(inf_opts,'sampleProportionally'))||isempty(inf_opts.sampleProportionally)
+    inf_opts.sampleProportionally = true;
+end
+if (~isfield(inf_opts,'AcrossIndividuals'))||isempty(inf_opts.AcrossIndividuals)
+    inf_opts.AcrossIndividuals = false;
+end
+if (~isfield(inf_opts,'behaviordLDS'))||isempty(inf_opts.behaviordLDS)
+    inf_opts.behaviordLDS = false;
+end
+if (~isfield(inf_opts,'step_psi'))||isempty(inf_opts.step_psi)
+    inf_opts.step_psi = 10;
+end
+if (~isfield(inf_opts,'lambda_behavior'))||isempty(inf_opts.lambda_behavior)
+    inf_opts.lambda_behavior = 0.1;
+end
+if (~isfield(inf_opts,'nBhv'))||isempty(inf_opts.nBhv)
+    inf_opts.nBhv = 1;
+end
+if (~isfield(inf_opts,'Psi_update'))||isempty(inf_opts.Psi_update)
+    inf_opts.Psi_update = true;
+end
+
+
+
 
 % solver_type '' defaults to fista, special '' defaults to bilinear
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
