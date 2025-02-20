@@ -1,7 +1,7 @@
 function [varargout] = BPDN_DF_bilinear(varargin)
 
 % [coef_dcs, recon_dcs, rMSE_dcs, PSNR_dcs] = ...
-%        BPDN_DF_bilinear(MEAS_SIG, MEAS_FUN, DYN_FUN, DWTfunc, param_vals, ...
+%        BPDN_DF_bilinear(MEAS_SIG, MEAS_SEL, DYN_FUN, DWTfunc, param_vals, ...
 %        TRUE_VID)
 %
 %   The inputs are:
@@ -110,7 +110,6 @@ end
 if isfield(param_vals, 'debias');    debiasOpt = param_vals.debias;
 else;                                debiasOpt = true; % debias by default
 end
-
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %% Some initializations and setups
 
@@ -142,6 +141,8 @@ Af = @(x) Phi(DWT_invert(x));
 Ab = @(x) DWT_apply(Phit(x));
 A  = linop_handles([M, N2], Af, Ab, opt_set);
 
+whatIsD = Af(eye(N2));
+
 res    = solver_L1RLS(A, MEAS_SIG(:, :, 1), lambda_val, zeros(N2, 1), opts );
 im_res = DWT_invert(real(res));
 
@@ -165,18 +166,6 @@ else
 end
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %% Solve for rest of frames
-
-% whatIsD = DWT_apply(Phit(eye(N2))).';
-whatIsD = Af(eye(N2));
-doNormScale = false;
-% doCVX = true;
-
-if doNormScale
-    y_t_flat = reshape(MEAS_SIG,[size(MEAS_SIG,1), size(MEAS_SIG,3)]);
-    scalingFactor = 1./sqrt(sum(y_t_flat.^2,1));
-%     disp(scalingFactor(1));
-%     disp(1/norm(y_t_flat));
-end
 for kk = 2:num_frames
     tic
     
@@ -195,33 +184,9 @@ for kk = 2:num_frames
     % Set  up A and At for TFOCS
     Phi  = meas_func.Phi;
     Phit = meas_func.Phit;
-        
-    if doNormScale
-       % y_t_flat = reshape(MEAS_SIG,[size(MEAS_SIG,1), size(MEAS_SIG,3)]);
-       % scalingFactorhistogram(sqrt(sum(dFF.^2,2)))histogram(sqrt(sum(dFF.^2,2)))
-        % note: x below in the solver represents a combination of the variables
-        % x (latent states) and c (coefficients for F dynamics)
-        % depending on the index
 
-        % N2: number of latents
-        % Nb: number of coefficients c
-
-        % scale lambdas
-%         lambda_val = (scalingFactor(kk)^2) * lambda_val; % not so sensitive to scaling actually? When in conjunction with only lambda history b; but also the c values look like noise
-%         lambda_b = (scalingFactor(kk)^2) * lambda_b; % if both lambda_val and lambda_b on, then scaling down sends tfocs warning
-%         lambda_history = (scalingFactor(kk)^2) * lambda_history;
-%         lambda_historyb = (scalingFactor(kk)^2) * lambda_historyb;
-
-%         lambda_val = (scalingFactor(kk)) * lambda_val;
-%          lambda_b = (scalingFactor(kk)) * lambda_b;
-%         lambda_history = (scalingFactor(kk)) * lambda_history;
-%          lambda_historyb = (scalingFactor(kk)) * lambda_historyb;
-        
-%         lambda_val = (1/scalingFactor(kk)) * lambda_val;
-%         lambda_b = (1/scalingFactor(kk)) * lambda_b;
-%         lambda_history = (1/scalingFactor(kk)) * lambda_history;
-%         lambda_historyb = (1/scalingFactor(kk)) * lambda_historyb;
-
+    if doTFOCS
+    	% disp('tfocs')
         Af = @(x) [sqrt(lambda_historyb)*x(N2+1:N2+N_b); ...
                sqrt(lambda_history)*x(1:N2) - sqrt(lambda_history)*f_dyn*x(N2+1:N2+N_b); ...
                Phi(DWT_invert(x(1:N2)))];
@@ -230,31 +195,21 @@ for kk = 2:num_frames
         A = linop_handles([M+N2+N_b, N2+N_b], Af, Ab, opt_set);
         % Optimize the BPDN objective function with TFOCS
         lamVec = [lambda_val*ones(N2,1);lambda_b*ones(N_b,1)];
-%         fprintf('condition of F is %f\n', cond(f_dyn))
-        res    = solver_L1RLS(A, scalingFactor(kk)*[sqrt(lambda_historyb)*bcoef_dcs(:,:,kk-1); zeros(N2,1); MEAS_SIG(:, :, kk)], lamVec, zeros(N2+N_b, 1), opts );
-        
-        
-%         lamVec = [lambda_val*ones(N2,1);lambda_b*ones(N_b,1)]/scalingFactor(kk);
-%         res    = solver_L1RLS(A, [sqrt(lambda_historyb)*bcoef_dcs(:,:,kk-1); zeros(N2,1); MEAS_SIG(:, :, kk)], lamVec, zeros(N2+N_b, 1), opts );
-        %above we solved for x_tilde, c_tilde
-%         coef_dcs(:, :, kk)  = res(1:N2); % restore x
-%         bcoef_dcs(:, :, kk) = res(N2+1:N2+N_b); % restore c
+    %     fprintf('condition of F is %f\n', cond(f_dyn))
+        res    = solver_L1RLS(A, [sqrt(lambda_historyb)*bcoef_dcs(:,:,kk-1); zeros(N2,1); MEAS_SIG(:, :, kk)], lamVec, zeros(N2+N_b, 1), opts );
     elseif doCVX
+	% disp('cvx')
         n_x = N2;
         n_b = N_b;
         lamVec = [lambda_val*ones(N2,1);lambda_b*ones(N_b,1)];
     %     fprintf('condition of F is %f\n', cond(f_dyn))
 
         b = [sqrt(lambda_historyb)*bcoef_dcs(:,:,kk-1); zeros(N2,1); MEAS_SIG(:, :, kk)];
-        
-% cvx_precision(CVX_Precision)
-
         cvx_begin quiet
             cvx_precision low
             variable xStates(n_x)
             variable cCoeffs(n_b)
             xc = [xStates;cCoeffs];
-%             whatIsD = DWT_apply(Phit(eye(n_x))).';
             A = [zeros(4,10) sqrt(lambda_historyb)*eye(4,4); sqrt(lambda_history)*eye(10,10) sqrt(lambda_history)*-1*f_dyn;whatIsD zeros(10,4)];
             minimize( norm(b-A*xc,2)+lambda_val*norm(xStates,1)+lambda_b*norm(cCoeffs,1) ) 
         cvx_end
@@ -264,37 +219,8 @@ for kk = 2:num_frames
         coef_dcs(:, :, kk)  = res(1:N2); 
         bcoef_dcs(:, :, kk) = res(N2+1:N2+N_b); 
        
-    elseif doTFOCS
-        Af = @(x) [sqrt(lambda_historyb)*x(N2+1:N2+N_b); ...
-           sqrt(lambda_history)*x(1:N2) - sqrt(lambda_history)*f_dyn*x(N2+1:N2+N_b); ...
-           Phi(DWT_invert(x(1:N2)))];
-        Ab = @(x) [DWT_apply(Phit(x((N_b+N2+1):end))) + sqrt(lambda_history)*x((N_b+1):(N_b+N2)); ...
-                   sqrt(lambda_historyb)*x(1:N_b) - sqrt(lambda_history)*(f_dyn')*x((N_b+1):(N_b+N2))];
-        A = linop_handles([M+N2+N_b, N2+N_b], Af, Ab, opt_set);
-%         A = [zedros(4,10) sqrt(lambda_historyb)*eye(4,4); sqrt(lambda_history)*eye(10,10) sqrt(lambda_history)*-1*f_dyn;whatIsD zeros(10,4)];
-        % Optimize the BPDN objective function with TFOCS
-%         A = [zeros(4,10) sqrt(lambda_historyb)*eye(4,4); sqrt(lambda_history)*eye(10,10) sqrt(lambda_history)*-1*f_dyn;  whatIsD zeros(10,4)];
-        lamVec = [lambda_val*ones(N2,1);lambda_b*ones(N_b,1)];
-        Y = [sqrt(lambda_historyb)*bcoef_dcs(:,:,kk-1); zeros(N2,1); MEAS_SIG(:, :, kk)];
-    %     fprintf('condition of F is %f\n', cond(f_dyn))
-       res    = solver_L1RLS(A, Y, lamVec, zeros(N2+N_b, 1), opts );
-
-% res = A\Y;
-%         opts.pos        = false;
-%         opts.lambda     = lamVec(:);
-%         opts.check_grad = 0;
-%         res = fista_lasso(Y, A, [], opts);
-%         param.mode   = 2;
-%         param.lambda = 1;
-%         param.tol = 1e-8;
-%         res      = mexLassoWeighted(Y, A, lamVec(:), param);
-        
-        
-        im_res              = DWT_invert(real(res(1:N2)));
-        coef_dcs(:, :, kk)  = res(1:N2); 
-        bcoef_dcs(:, :, kk) = res(N2+1:N2+N_b); 
-    
     else %fista
+	% disp('fista')
 
         if deltaOpt;  yNow = MEAS_SIG(:,:,kk) - MEAS_SIG(:,:,kk-1);
         else;         yNow = MEAS_SIG(:,:,kk);                        end
@@ -305,25 +231,12 @@ for kk = 2:num_frames
             lamVec = [lambda_val*ones(N2,1);lambda_b*ones(N_b,1)];
 
             opts.pos        = false;
-%             opts.lambda     = lambda_b*ones(N_b,1);
             opts.lambda     = lamVec(:);
-            opts.check_grad = 0;
-
-%             Y      = [bcoef_dcs(:,:,kk-1); zeros(N2,1); yNow];
-% %             A      = [sqrt(lambda_historyb)*eye(N_b,N_b); f_dyn; whatIsD];
-%             A = [zeros(N_b,N2) eye(N_b,N_b); eye(N2,N2) -1*f_dyn;whatIsD zeros(size(whatIsD,1),N_b)];
-    
+            opts.check_grad = 0;    
             res = fista_lasso(Y, A, [], opts); %FIXME: augmented Y needed, not just measurement
        
-    %         A = linop_handles([M,M],Af,Ab,opt_set);
-    %         res = solver_L1RLS(f_dyn, yNow,lambda_b,zeros(N_b,1),opts);
         else
             
-%             A      = [sqrt(lambda_historyb)*eye(N_b,N_b); f_dyn];
-%             Y      = [sqrt(lambda_historyb)*bcoef_dcs(:,:,kk-1); yNow];
-%             lamVec = lambda_b*ones(N_b,1);
-
-%             A      = [sqrt(lambda_historyb)*eye(N_b,N_b); f_dyn; whatIsD];
             A = [zeros(N_b,N2) sqrt(lambda_historyb)*eye(N_b,N_b); sqrt(lambda_history)*eye(N2,N2) sqrt(lambda_history)*-1*f_dyn;whatIsD zeros(size(whatIsD,1),N_b)];
             Y = [sqrt(lambda_historyb)*bcoef_dcs(:,:,kk-1); zeros(N2,1); yNow];
             lamVec = [lambda_val*ones(N2,1);lambda_b*ones(N_b,1)];
@@ -333,13 +246,6 @@ for kk = 2:num_frames
             opts.lambda     = lamVec(:);
             opts.check_grad = 0;
             res = fista_lasso(Y, A, [], opts);
-    %         res = res + sign(res).*opts.lambda.*(abs(res) > 0.1*max(abs(res)));% Correct lasso bias
-            % OPTION 1
-    %         idxNNZ = (abs(res) > 0.5*max(abs(res)));
-    %         res(~idxNNZ) = 0;
-    %         res(idxNNZ)  = A(:,idxNNZ)\Y;
-            % OPTION 2
-    %         opts.lambda = lamVec(:).*(~idxNNZ);
             if debiasOpt
                 opts.lambda = lamVec(:)./(1 + 100*abs(res));
                 res         = fista_lasso(Y, A, [], opts);
@@ -349,42 +255,12 @@ for kk = 2:num_frames
         coef_dcs(:, :, kk)  = res(1:N2); 
         bcoef_dcs(:, :, kk) = res(N2+1:N2+N_b);
 
-    %     else
-% %         Af = @(x) [sqrt(lambda_historyb)*x(N2+1:N2+N_b); ...
-% %            sqrt(lambda_history)*x(1:N2) - sqrt(lambda_history)*f_dyn*x(N2+1:N2+N_b); ...
-% %            Phi(DWT_invert(x(1:N2)))];
-% %         Ab = @(x) [DWT_apply(Phit(x((N_b+N2+1):end))) + sqrt(lambda_history)*x((N_b+1):(N_b+N2)); ...
-% %                    sqrt(lambda_historyb)*x(1:N_b) - sqrt(lambda_history)*(f_dyn')*x((N_b+1):(N_b+N2))];
-% %         A = linop_handles([M+N2+N_b, N2+N_b], Af, Ab, opt_set);
-% %         A = [zedros(4,10) sqrt(lambda_historyb)*eye(4,4); sqrt(lambda_history)*eye(10,10) sqrt(lambda_history)*-1*f_dyn;whatIsD zeros(10,4)];
-%         % Optimize the BPDN objective function with TFOCS
-%         A = [zeros(4,10) sqrt(lambda_historyb)*eye(4,4); sqrt(lambda_history)*eye(10,10) sqrt(lambda_history)*-1*f_dyn;  whatIsD zeros(10,4)];
-%         lamVec = [lambda_val*ones(N2,1);lambda_b*ones(N_b,1)];
-%         Y = [sqrt(lambda_historyb)*bcoef_dcs(:,:,kk-1); zeros(N2,1); MEAS_SIG(:, :, kk)];
-%     %     fprintf('condition of F is %f\n', cond(f_dyn))
-% %        res    = solver_L1RLS(A, [sqrt(lambda_historyb)*bcoef_dcs(:,:,kk-1); zeros(N2,1); MEAS_SIG(:, :, kk)], lamVec, zeros(N2+N_b, 1), opts );
-% 
-% % res = A\Y;
-%         opts.pos        = false;
-%         opts.lambda     = lamVec(:);
-%         opts.check_grad = 0;
-%         res = fista_lasso(Y, A, [], opts);
-% %         param.mode   = 2;
-% %         param.lambda = 1;
-% %         param.tol = 1e-8;
-% %         res      = mexLassoWeighted(Y, A, lamVec(:), param);
-%         
-%         
-%         im_res              = DWT_invert(real(res(1:N2)));
-%         coef_dcs(:, :, kk)  = res(1:N2); 
-%         bcoef_dcs(:, :, kk) = res(N2+1:N2+N_b); 
-
-%         if deltaOpt;  yNow = MEAS_SIG(:,:,kk) - MEAS_SIG(:,:,kk-1);
-%         else;         yNow = MEAS_SIG(:,:,kk);                        end
-%  
         
     end   
-  
+
+    im_res              = DWT_invert(real(res(1:N2)));
+    coef_dcs(:, :, kk)  = res(1:N2);
+    bcoef_dcs(:, :, kk) = res(N2+1:N2+N_b);
 
     recon_dcs(:, :, kk) = im_res;
     if rMSE_calc_opt == 1
