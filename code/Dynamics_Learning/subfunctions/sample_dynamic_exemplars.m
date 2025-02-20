@@ -1,4 +1,4 @@
-function x_im = sample_dynamic_exemplars(data_obj, opts)
+function [x_im, varargout] = sample_dynamic_exemplars(data_obj, opts, varargin)
 
 % function x_im = sample_exemplars(data_obj, opts)
 %
@@ -9,30 +9,57 @@ function x_im = sample_dynamic_exemplars(data_obj, opts)
 %
 % 2018 - Adam Charles
 
+% modified to track which samples are used - EY 9/23/24
+
+
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %% Initializations
 
 Ts    = opts.T_s;                                                          % Number of times
 x_im  = cell(1,opts.N_ex);                                                 % Initialize the exemplar sample array
 
+start_ind    = [];
+end_ind      = [];
+
+if nargin > 3
+    start_ind = varargin{1};
+    end_ind   = varargin{2};
+elseif nargin > 2
+    start_ind = varargin{1};
+end
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %% Get Training Data. 
 
+% disp(start_ind)
+% disp(end_ind)
+
 if isnumeric(data_obj)&&(numel(size(data_obj))==2)
-    data_use_ind = ceil((size(data_obj, 2)-Ts+1)*rand(1, opts.N_ex));      % Select a sampling of the data blindly
+
+    if isempty(start_ind)
+        start_ind = ceil((size(data_obj, 2)-Ts+1)*rand(1, opts.N_ex));      % Select a sampling of the data blindly
+    end
+
     for kk = 1:opts.N_ex
-        x_im{kk} = data_obj(:,data_use_ind(kk):(data_use_ind(kk)+Ts-1));     % Extract a portion of the sequence
+        x_im{kk} = data_obj(:,start_ind(kk):(start_ind(kk)+Ts-1));     % Extract a portion of the sequence
         if (opts.ssim_flag)&&(sqrt(sum(x_im{kk}(:).^2))>0)            % If desired, normalize the sequence
                 x_im{kk} = x_im{kk}./sqrt(sum(x_im{kk}(:).^2));            % Normalize the chosen sample, as long as the norm is not zero
         end
     end
 elseif isnumeric(data_obj)&&(numel(size(data_obj))==3)                     % Can't slice the main image cube, so extract data serially:   
-    height_im = size(data_obj, 1) - opts.bl_size(1) + 1;                   % Get heights and widths for allowable starting indices for subimages
-    width_im  = size(data_obj, 2) - opts.bl_size(2) + 1;                   %  ---------------
-    num_im    = size(data_obj, 3) - Ts + 1;                                %  ---------------
-    start_ind = ceil(rand(opts.N_ex, 3).*[height_im, width_im, num_im]);   % Pick random starting points
-    end_ind   = bsxfun(@plus, start_ind, ...
-                               [opts.bl_size(1), opts.bl_size(1), Ts]) - 1;% Calculate ending points
+
+    if isempty(start_ind)
+        height_im = size(data_obj, 1) - opts.bl_size(1) + 1;                   % Get heights and widths for allowable starting indices for subimages
+        width_im  = size(data_obj, 2) - opts.bl_size(2) + 1;                   %  ---------------
+        num_im    = size(data_obj, 3) - Ts + 1;                                %  ---------------
+        start_ind = ceil(rand(opts.N_ex, 3).*[height_im, width_im, num_im]);   % Pick random starting points
+        end_ind   = bsxfun(@plus, start_ind, ...
+                                   [opts.bl_size(1), opts.bl_size(1), Ts]) - 1;% Calculate ending points
+    end
+    if isempty(end_ind)
+        end_ind   = bsxfun(@plus, start_ind, ...
+                                   [opts.bl_size(1), opts.bl_size(1), Ts]) - 1;% Calculate ending points %EY added 01/14/25 - untested
+    end
+
     for kk = 1:opts.N_ex
         x_im{kk} = reshape(data_obj(start_ind(kk,1):end_ind(kk,1),...
             start_ind(kk,2):end_ind(kk,2), start_ind(kk,3):end_ind(kk,3)), [], 1); % Pick out subimage and reshape it to a vector
@@ -44,9 +71,12 @@ elseif iscell(data_obj)&&(numel(size(data_obj{1}))==2)
     num_im    = length(data_obj);                                          % Get sizes of the data blocks (color images or video):
     samplesCounter = 0;
     timePointsSum = 0;
-    for jj = 1:num_im
-        timePointsSum = timePointsSum + size(data_obj{jj},2);
+    for ii = 1:num_im
+        timePointsSum = timePointsSum + size(data_obj{ii},2);
     end
+
+    start_ind_store = cell(num_im,1); % EY added 9/23/24 - tested
+
     for jj = 1:num_im
         if opts.sampleProportionally
             trialProportion = size(data_obj{jj},2)/timePointsSum;
@@ -60,15 +90,25 @@ elseif iscell(data_obj)&&(numel(size(data_obj{1}))==2)
         end
         
         height_im = size(data_obj{jj}, 2) - Ts + 1;                             % Get heights and widths for allowable starting indices for subimages
-        start_ind = ceil(bsxfun(@times,rand(nSamplesThisTrial,1),height_im));  % Pick random starting points
+        
+        if isempty(start_ind)
+            start_ind_jj  = ceil(bsxfun(@times,rand(nSamplesThisTrial,1),height_im));  % Pick random starting points
+            start_ind_store{jj} = start_ind_jj; %store all values
+        else
+            start_ind_jj  = start_ind{jj};
+        end
+
         for kk =  1:nSamplesThisTrial %opts.N_ex
             x_im{samplesCounter +kk} = data_obj{jj}(:,...
-                                start_ind(kk):start_ind(kk)+Ts-1); % Pick out subimage and reshape it to a vector
+                                start_ind_jj(kk):start_ind_jj(kk)+Ts-1); % Pick out subimage and reshape it to a vector
             if (opts.ssim_flag)&&(sqrt(sum(x_im{samplesCounter +kk}(:).^2))>0)            % If desired, normalize the sequence
                     x_im{samplesCounter +kk} = x_im{samplesCounter +kk}./sqrt(sum(x_im{samplesCounter +kk}(:).^2));            % Normalize the chosen sample, as long as the norm is not zero
             end
         end
         samplesCounter = samplesCounter + nSamplesThisTrial;
+    end
+    if isempty(start_ind)
+        start_ind = start_ind_store;
     end
 elseif iscell(data_obj)&&(numel(size(data_obj{1}))==3)
     disp('Note: sample_dynamic_examplars still uses dimensions of the first object in cell array for 3d images - must fix if you use this functionality')
@@ -77,10 +117,12 @@ elseif iscell(data_obj)&&(numel(size(data_obj{1}))==3)
     width_im = size(data_obj{1}, 2) - opts.bl_size(2) + 1;
     depth_im = size(data_obj{1}, 3) - Ts + 1;
     
-    start_ind = ceil(bsxfun(@times,rand(opts.N_ex, 4), ...
-                                [height_im, width_im, depth_im, num_im])); % Pick random starting points
-    end_ind   = bsxfun(@plus, start_ind(:,1:3), ...
-                              [opts.bl_size(1), opts.bl_size(1), Ts]) - 1; % Calculate ending points
+    if isempty(start_ind)
+        start_ind = ceil(bsxfun(@times,rand(opts.N_ex, 4), ...
+                                    [height_im, width_im, depth_im, num_im])); % Pick random starting points
+        end_ind   = bsxfun(@plus, start_ind(:,1:3), ...
+                                  [opts.bl_size(1), opts.bl_size(1), Ts]) - 1; % Calculate ending points
+    end
     for kk = 1:opts.N_ex
         x_im = reshape(data_obj{start_ind(kk,4)}(...
                                 start_ind(kk,1):end_ind(kk,1),...
@@ -91,7 +133,13 @@ else
     error('Unknown Data Type!! Choose ''vector'', ''square'' or ''cube''...')
 end
 
+if nargout > 1
+    varargout{1} = start_ind;
+    varargout{2} = end_ind;
+end
 
+% disp(start_ind)
+% disp(end_ind)
 
 end
 

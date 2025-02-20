@@ -11,7 +11,7 @@ function [D, F] = bpdndf_dynamics_learning(data_obj, F_init, D_init, inf_opts)
 %% Parse Inputs
 
 [data_type, dataShape, sig_opts] = checkInputTypes(data_obj);              % Check the input type and set up some parameters accordingly
-
+disp(data_type)
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %% Parameter checking
 
@@ -161,7 +161,7 @@ elseif iscell(data_obj)
     elseif ndims(data_obj{1}) == 3
         dataShape = 'image';
     else
-        error('Incompatiable number of dimensions in the data array!')
+        error('Incompatible number of dimensions in the data array!')
     end
 elseif isnumeric(data_obj)
     data_type = 'datamatrix';
@@ -177,6 +177,8 @@ elseif isempty(data_obj)
     data_type = 'synth';
     dataShape = 'image';
     sig_opts  = default_synth_params();
+else
+    error('What kind of data is this?')
 end
 
 end
