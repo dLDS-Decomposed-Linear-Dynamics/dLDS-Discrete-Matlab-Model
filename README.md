@@ -11,6 +11,8 @@ This repository is subject to the MIT License.
 =================================================================
 # A) Installation Instructions and Orientation - MATLAB version
 
+NOTE: Please see the dev branch of this repository for the code used in Yezerets, E., Mudrik, N. & Charles, A.S. Decomposed Linear Dynamical Systems (dLDS) models reveal instantaneous, context-dependent dynamic connectivity in C. elegans. Commun Biol 8, 1218 (2025). https://doi.org/10.1038/s42003-025-08599-3
+
 This code is known to be compatible with MATLAB versions from 2022 through 2023, but may have a few years of backward and forward compatibility, as well (for example, there is a known `cellfun()` call that does not work in version 2020a). Please reach out to our team if you have experience challenges with compatibility with other versions of MATLAB.
 
 In order to use our code, please clone this repository. There is also [a version of this code in Python](https://github.com/dLDS-Decomposed-Linear-Dynamics/dLDS-Discrete-Python-Model) - the MATLAB code was used to work with the _C. elegans_ data.
